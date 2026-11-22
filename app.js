@@ -1,6 +1,6 @@
 'use strict';
 /* ===== ここえいご  app.js ===== */
-const APP_VER = '2.0.0';
+const APP_VER = '2.1.0';
 const $ = (s, e = document) => e.querySelector(s);
 const $$ = (s, e = document) => [...e.querySelectorAll(s)];
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -65,7 +65,7 @@ function freshProfile(name) {
   return {
     name: name || '', stars: 0, earned: 0, streak: 0, best: 0, lastDay: '', lessonDay: '', days: {},
     today: null, mg: null, review: [], words: {}, own: ['bg0'], wear: [], bg: 'bg0', mock: [], spokeDay: '', spoke: [],
-    set: { rate: 0.85, voice: '', nNew: 5, lvl: 5, sfx: true, lock: true, src: 'book', mgMax: 1 }
+    set: { rate: 0.85, voice: '', nNew: 5, lvl: 5, sfx: true, lock: true, src: 'book', mgMax: 1, rev: 20 }
   };
 }
 function fixProfile(p) {
@@ -104,7 +104,8 @@ const streakNow = () => (S.lastDay === todayKey() || S.lastDay === dayOffset(-1)
 
 /* ---------- 記憶（くりかえし学習） ---------- */
 // 正解するたびに次の出題までの日数がのびる（ライトナー方式）。まちがえたら1日後にもどる。
-const IV = [0, 1, 2, 4, 7, 15, 30];
+// 正解するたびに 次のふくしゅうまでの日数がのびる：1→3→7→14→30→60→120日（まちがえたら 1日後に もどる）
+const IV = [0, 1, 3, 7, 14, 30, 60, 120];
 let SESSION = new Set();
 function ws(en) { return S.words[en] || (S.words[en] = { b: 0, d: 0, ok: 0, ng: 0 }); }
 function grade(en, ok) {
@@ -112,7 +113,7 @@ function grade(en, ok) {
   if (ok) s.ok++; else s.ng++;
   if (SESSION.has(en)) { if (!ok) { s.b = 1; s.d = now + DAY - 3 * 3600e3; } return; }
   SESSION.add(en);
-  s.b = ok ? Math.min(6, s.b + 1) : 1;
+  s.b = ok ? Math.min(IV.length - 1, s.b + 1) : 1;
   s.d = now + IV[s.b] * DAY - 3 * 3600e3;
 }
 const mastered = w => S.words[w.id] && S.words[w.id].b >= 3;
@@ -330,8 +331,12 @@ function lessonPlan(theme) {
   const now = Date.now(), L = S.set.lvl;
   const pool = WORDS.filter(w => inLevel(w) && (!theme || (CMAP[theme] && CMAP[theme].words.includes(w))));
   const due = pool.filter(w => { const s = S.words[w.id]; return s && s.b > 0 && s.d <= now; })
-    .sort((a, b) => S.words[a.id].d - S.words[b.id].d).slice(0, theme ? 4 : 8);
-  let nNew = S.set.nNew; if (due.length >= 8) nNew = Math.min(nNew, 2);
+    .sort((a, b) => S.words[a.id].d - S.words[b.id].d);
+  // ふくしゅうを 先に。たまっている時は あたらしいことばを へらして、わすれる前に くりかえせるようにする
+  const cap = theme ? 4 : (S.set.rev || 20), backlog = due.length;
+  due.splice(cap);
+  let nNew = S.set.nNew;
+  if (!theme) nNew = backlog <= cap ? nNew : backlog <= cap * 1.5 ? Math.min(nNew, 3) : backlog <= cap * 2.5 ? Math.min(nNew, 2) : 1;
   const notYet = w => !S.words[w.id] || !S.words[w.id].b;
   let fresh;
   if (!theme && BOOKWORDS.length && S.set.src === 'book') fresh = BOOKWORDS.filter(notYet).slice(0, nNew); // 本の順番どおり
@@ -1047,6 +1052,7 @@ function settings() {
     <div class="field"><label>なまえ</label><input type="text" id="sName" value="${esc(S.name)}" maxlength="12"></div>
     <div class="field"><label>めざす級</label>${seg('sLv', [[5, '英検5級'], [4, '英検4級']], S.set.lvl)}</div>
     <div class="field"><label>1回の あたらしいことば</label>${seg('sNew', [[3, '3こ'], [5, '5こ'], [8, '8こ']], S.set.nNew)}</div>
+    <div class="field"><label>1日の ふくしゅう（さいだい）</label>${seg('sRev', [[12, '12こ'], [20, '20こ'], [30, '30こ']], S.set.rev || 20)}<div class="small">ふくしゅうが たまると、あたらしいことばは じどうで へります</div></div>
     <div class="field"><label>まちがいさがし（1日の まい数）</label>${seg('sMg', [[1, '1まい'], [2, '2まい'], [3, '3まい']], S.set.mgMax)}</div>
     <div class="field"><label>よみあげの はやさ</label>${seg('sRate', [[0.7, 'ゆっくり'], [0.85, 'ふつう'], [1, 'はやい']], S.set.rate)}</div>
     <div class="switch"><b>こうかおん</b><button class="tog ${S.set.sfx ? 'on' : ''}" id="sSfx"></button></div>
@@ -1091,6 +1097,7 @@ function settings() {
   segBind('sLv', v => { S.set.lvl = +v; reset0(); });
   segBind('sNew', v => { S.set.nNew = +v; reset0(); });
   segBind('sMg', v => S.set.mgMax = +v);
+  segBind('sRev', v => { S.set.rev = +v; reset0(); });
   segBind('sRate', v => { S.set.rate = +v; say('Hello! How are you?'); });
   $('#sSfx').onclick = e => { S.set.sfx = !S.set.sfx; e.currentTarget.classList.toggle('on', S.set.sfx); save(); sfx('ok'); };
   $$('.bud').forEach(b => b.onclick = () => { S.bi = +b.dataset.b; S.bd = todayKey(); save(); settings(); });
