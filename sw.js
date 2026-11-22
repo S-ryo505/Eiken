@@ -1,6 +1,6 @@
 // オフラインでも動くようにするしくみ（更新したら VERSION の数字を上げる）
-const VERSION = 'mimi-eigo-v1.8.0';
-const FILES = ['./', 'index.html', 'app.js', 'data.js', 'book.js', 'pics.js', 'mg.js', 'buddies.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
+const VERSION = 'kokoeigo-v2.0.0';
+const FILES = ['./', 'index.html', 'app.js', 'data.js', 'book.js', 'pics.js', 'mg.js', 'buddies.js', 'model3d.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));

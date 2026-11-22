@@ -1,6 +1,6 @@
 'use strict';
-/* ===== ミミィのえいご  app.js ===== */
-const APP_VER = '1.8.0';
+/* ===== ここえいご  app.js ===== */
+const APP_VER = '2.0.0';
 const $ = (s, e = document) => e.querySelector(s);
 const $$ = (s, e = document) => [...e.querySelectorAll(s)];
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -375,6 +375,7 @@ function home() {
   <div class="hd"><div class="who"><span class="lv">Lv.${level()}</span><b>${esc(S.name)}</b><small>${title()}</small></div>
   <div class="chips"><span class="chip">⭐ <b id="starN">${S.stars}</b></span><span class="chip">🔥 ${streakNow()}にち</span><button class="iconbtn" id="gear" aria-label="せってい">⚙️</button></div></div>
   ${trial ? '<div class="trialbar">🔧 おためしモード中（きろくは のこりません）</div>' : ''}
+  <div class="stage3d" id="m3d"><div class="t3d">ここえいご</div><div class="hint3d">どんぐりむっつりおにぎり ・ 👆 さわって まわせるよ</div></div>
   <div class="hero"><div class="mimi mood-happy">${mimiSVG()}</div>
    <div class="bubble">${esc(S.name)}ちゃん、${gJa}！<br><span class="small">きょうの なかまは <b>${BB.name}</b>（${BB.who}）</span><br><span class="bond">なかよし ${'💗'.repeat(Math.min(5, Math.ceil(((S.bond || {})[BB.id] || 0) / 3)))}${'🤍'.repeat(5 - Math.min(5, Math.ceil(((S.bond || {})[BB.id] || 0) / 3)))}</span><br>${esc(BB.hello)}<br><button class="say" id="greet">🔊 ${gEn}</button></div></div>
   <div class="set-card ${doneToday ? 'done' : ''}">
@@ -395,10 +396,11 @@ function home() {
    <div>4級のことば ${m4} / ${L4.length}</div><div class="meter p"><i style="width:${L4.length ? m4 / L4.length * 100 : 0}%"></i></div>
    ${S.mock.length ? `<div class="small">さいきんのミニテスト：${S.mock.slice(-1).map(x => `${x.lv}級 ${x.s}/${x.t}（${Math.round(x.s / x.t * 100)}%）`)[0]}</div>` : ''}
   </div>
-  <p class="small center" style="margin-top:18px">ミミィのえいご v${APP_VER}</p>
+  <p class="small center" style="margin-top:18px">ここえいご v${APP_VER}</p>
  </div>`);
   $('#gear').onclick = settings;
   $('#greet').onclick = () => say(gEn);
+  stage3d($('#m3d'));
   if ($('#setBtn')) $('#setBtn').onclick = () => runStage(T.st);
   if ($('#moreBtn')) $('#moreBtn').onclick = () => startLesson();
   MG.bindCard();
@@ -414,15 +416,22 @@ function home() {
   }, 1500);
 }
 
+// トップの3Dキャラ。読みこめないときは 2Dの むすびを かわりに出す
+function stage3d(el) {
+  if (!el) return;
+  const ok = typeof Mascot3D !== 'undefined' && Mascot3D.mount(el, () => { tone([660, 990], .08); say(pick(['Hello!', 'Hi!', "Let's study!", 'Good job!'])); });
+  if (!ok) el.insertAdjacentHTML('beforeend', `<div class="mimi mood-happy" style="width:150px;margin:20px auto 0">${mimiSVG([], 'musubi')}</div>`);
+}
 /* ========== はじめて ========== */
 function welcome() {
   show(`<div class="welcome center">
-   <div class="mimi mood-happy">${mimiSVG([], 'mimi')}</div>
-   <div class="bubble" style="text-align:left">はじめまして！ わたしは <b>ミミィ</b>。<br>おおきな みみで、えいごを いっしょに きこうね！<br>あなたの なまえを おしえて？</div>
+   <div class="stage3d" id="m3d"><div class="t3d">ここえいご</div><div class="hint3d">👆 さわって まわせるよ</div></div>
+   <div class="bubble" style="text-align:left">ここえいご へ ようこそ！<br>まいにち かわる なかまたちと いっしょに、えいごを きいて おぼえようね。<br>あなたの なまえを おしえて？</div>
    <div class="field" style="margin-top:16px"><input type="text" id="nm" placeholder="なまえ" maxlength="12" style="font-size:22px;text-align:center"></div>
    <div class="field"><label>めざす級</label><div class="seg" id="lvSeg" style="justify-content:center"><button data-v="5" class="on">英検5級</button><button data-v="4">英検4級</button></div></div>
    <button class="btn big" id="go">はじめる ▶</button>
    <p class="small">※ 音が出ます。タブレットの音量を あげてね</p></div>`);
+  stage3d($('#m3d'));
   let lv = 5;
   $$('#lvSeg button').forEach(b => b.onclick = () => { lv = +b.dataset.v; $$('#lvSeg button').forEach(x => x.classList.toggle('on', x === b)); });
   $('#go').onclick = () => {
@@ -1075,7 +1084,7 @@ function settings() {
     <p class="small">いまの人（${esc(S.name)}）の きろくを ぜんぶ けします。</p>
     <button class="btn sm sub" id="reset">きろくを けす</button>
   </div>
-  <p class="small center">ミミィのえいご v${APP_VER}／ことば ${WORDS.length}こ・かいわ ${DIALOGS.length}・ならべかえ ${SENTENCES.length}・ぶんぽう ${GRAMMAR.length}</p></div>`);
+  <p class="small center">ここえいご v${APP_VER}／ことば ${WORDS.length}こ・かいわ ${DIALOGS.length}・ならべかえ ${SENTENCES.length}・ぶんぽう ${GRAMMAR.length}</p></div>`);
   const segBind = (id, fn) => $$(`#${id} button`).forEach(b => b.onclick = () => { $$(`#${id} button`).forEach(x => x.classList.toggle('on', x === b)); fn(b.dataset.v); save(); });
   $('#sName').onchange = e => { const v = e.target.value.trim(); if (v) { S.name = v; save(); } };
   const reset0 = () => { if (S.today && !S.today.st) S.today = null; };
