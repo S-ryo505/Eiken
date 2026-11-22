@@ -1,6 +1,6 @@
 'use strict';
 /* ===== ここえいご  app.js ===== */
-const APP_VER = '2.1.0';
+const APP_VER = '2.2.0';
 const $ = (s, e = document) => e.querySelector(s);
 const $$ = (s, e = document) => [...e.querySelectorAll(s)];
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -107,10 +107,12 @@ const streakNow = () => (S.lastDay === todayKey() || S.lastDay === dayOffset(-1)
 // 正解するたびに 次のふくしゅうまでの日数がのびる：1→3→7→14→30→60→120日（まちがえたら 1日後に もどる）
 const IV = [0, 1, 3, 7, 14, 30, 60, 120];
 let SESSION = new Set();
+let PRACTICE = false; // おかわり中は 日数を のばさない（まちがえたら あしたに もどすだけ）
 function ws(en) { return S.words[en] || (S.words[en] = { b: 0, d: 0, ok: 0, ng: 0 }); }
 function grade(en, ok) {
   const s = ws(en), now = Date.now();
   if (ok) s.ok++; else s.ng++;
+  if (PRACTICE) { if (!ok) { s.b = Math.min(s.b || 1, 1); s.d = now + DAY - 3 * 3600e3; } return; }
   if (SESSION.has(en)) { if (!ok) { s.b = 1; s.d = now + DAY - 3 * 3600e3; } return; }
   SESSION.add(en);
   s.b = ok ? Math.min(IV.length - 1, s.b + 1) : 1;
@@ -254,8 +256,17 @@ function cheer() {
 }
 function boo(text) {
   COMBO = 0; MISS++; sfx('ng');
-  setMimi(MISS >= 2 ? 'shock' : 'oops', text || (Math.random() < .5 && bline('ng') ? bline('ng') : pick(NGMSG)));
+  let msg = text || (Math.random() < .5 && bline('ng') ? bline('ng') : pick(NGMSG));
+  if (MISS >= 2) msg += '<br><span class="small">わからない ときは「🤔 わからない」を おしてね。それも だいじな べんきょうだよ</span>';
+  setMimi('oops', msg);
 }
+// 「わからない」を おしたとき（せめない。こたえを いっしょに おぼえる）
+function idkSay() {
+  COMBO = 0; MISS = 0; tone([523, 440], .1, 'sine', .08);
+  setMimi('normal', pick(['おしえてくれて ありがとう！ こたえは これだよ。いっしょに おぼえよう', 'わからないって いえるの、えらいよ！ こたえを よく 見て きいてね', 'だいじょうぶ！ つぎに でたとき わかれば いいんだよ']));
+}
+const idkBtn = () => `<button class="btn sm sub idk ${MISS >= 2 ? 'pulse' : ''}" id="idk">🤔 わからない</button>`;
+function pulseIdk() { const b = $('#idk'); if (b) b.classList.add('pulse'); }
 function thinkQ(text) { moodFor('think', text, 1800); }
 /* タッチすると はんのう／ひまだと きょろきょろ／ほうっておくと ねむる */
 let lastAct = Date.now(), taps = [], actT = 0;
@@ -387,9 +398,8 @@ function home() {
    <div class="t">${doneToday ? '💮 きょうの ワンセット クリア！' : '🌟 きょうの ワンセット'}</div>
    <div class="d">${doneToday ? 'すごい！ あしたも いっしょに やろうね' : `やくそく：まいにち これだけは やろうね（${T.fresh.length ? `あたらしいことば ${T.fresh.length}こ` : 'ふくしゅうの日'}${T.due.length ? `・ふくしゅう ${T.due.length}こ` : ''}）`}</div>
    <div class="steps">${STAGES.map((st, k) => `<div class="step ${k < T.st ? 'ok' : k === T.st && !doneToday ? 'now' : ''}"><div class="si">${k < T.st ? '✅' : st.icon}</div><div class="sn">${st.name}</div></div>`).join('')}</div>
-   ${doneToday ? '<button class="btn sm sub" id="moreBtn">🍙 おかわりレッスン</button>' : `<button class="btn big" id="setBtn">${T.st ? `つづきから（${T.st + 1}/${STAGES.length}）▶` : 'スタート ▶'}</button>`}
+   ${doneToday ? okwCard() : `<button class="btn big" id="setBtn">${T.st ? `つづきから（${T.st + 1}/${STAGES.length}）▶` : 'スタート ▶'}</button>`}
   </div>
-  <div id="mgSlot">${MG.card()}</div>
   <div class="week">${week}</div>
   <div id="voiceNote"></div>
   <div class="sec-title">${locked ? '🔒 ワンセットが おわったら あそべるよ' : 'あそびながら まなぼう'}</div>
@@ -407,8 +417,8 @@ function home() {
   $('#greet').onclick = () => say(gEn);
   stage3d($('#m3d'));
   if ($('#setBtn')) $('#setBtn').onclick = () => runStage(T.st);
-  if ($('#moreBtn')) $('#moreBtn').onclick = () => startLesson();
-  MG.bindCard();
+  if ($('#moreBtn')) $('#moreBtn').onclick = () => okawari();
+  if ($('#giftBtn')) $('#giftBtn').onclick = () => MG.open();
   $$('.tile').forEach(t => t.onclick = () => {
     if (t.classList.contains('locked')) { setMimi('normal', 'さきに きょうの ワンセットを やろう！ おわったら あそべるよ 🌟'); say("Let's do today's set first!"); return; }
     MODES[t.dataset.m]();
@@ -447,8 +457,8 @@ function welcome() {
 }
 
 /* ========== 問題のしくみ ========== */
-function runSeq({ title, items, bonus = 2, onFinish, again, intro, nextStep }) {
-  COMBO = 0; MISS = 0;
+function runSeq({ title, items, bonus = 2, onFinish, again, intro, nextStep, practice = false }) {
+  COMBO = 0; MISS = 0; PRACTICE = practice;
   SESSION = new Set();
   let i = 0, score = 0, answered = 0;
   const secs = {}; const startEarned = S.earned;
@@ -492,7 +502,8 @@ function runSeq({ title, items, bonus = 2, onFinish, again, intro, nextStep }) {
     sfx('fan'); confetti(); say(perfect ? 'Perfect! Great job!' : 'Good job!');
     if (again) $('#again').onclick = again;
     if (nextStep) $('#nstep').onclick = nextStep.fn;
-    if ($('#mgGo')) $('#mgGo').onclick = () => MG.open();
+    if ($('#okwGo')) $('#okwGo').onclick = () => okawari();
+    if ($('#giftGo')) $('#giftGo').onclick = () => MG.open();
     $('#toHome').onclick = home;
   }
   step();
@@ -502,11 +513,40 @@ function runSeq({ title, items, bonus = 2, onFinish, again, intro, nextStep }) {
 function choiceQ(ctx, { prompt, opts, ans, word, autoplay, sayAfter, onWrong, onAnswer, cls = '', optCls = '', reveal, mimi }) {
   const st = $('#stage');
   if (mimi) thinkQ(mimi);
-  st.innerHTML = `<div class="qcard">${prompt}</div><div class="opts ${cls}">${opts.map((o, i) => `<button class="opt ${optCls}" data-i="${i}">${o}</button>`).join('')}</div><div class="after"></div>`;
-  if (autoplay) { bindPlay(st, autoplay); setTimeout(() => say(autoplay), 350); }
+  st.innerHTML = `<div class="qcard">${prompt}</div><div class="opts wait ${cls}">${opts.map((o, i) => `<button class="opt ${optCls}" data-i="${i}">${o}</button>`).join('')}</div><div class="idk-row">${idkBtn()}</div><div class="after"></div>`;
+  // さいごまで きく（見る）までは えらべない → あてずっぽうを ふせぐ
+  let ready = false;
+  const setReady = () => { if (ready) return; ready = true; const o = $('.opts', st); if (o) o.classList.remove('wait'); };
+  if (autoplay) { bindPlay(st, autoplay); setTimeout(async () => { await say(autoplay); setReady(); }, 350); setTimeout(setReady, 7000); }
+  else setTimeout(setReady, 900);
   let locked = false;
+  const finish = async (ok, reveal_) => {
+    if (reveal_) {
+      $('.after', st).insertAdjacentHTML('beforeend', `<div class="reveal">${reveal_}</div>`);
+      $$('.after [data-say]', st).forEach(x => x.onclick = () => say(x.dataset.say));
+    }
+    const ir = $('.idk-row', st); if (ir) ir.remove();
+    if (ok && !reveal_) {
+      await sleep(350); if (sayAfter) await say(sayAfter); await sleep(350);
+      if ($('#stage') === st) ctx.next();
+    } else {
+      $('.after', st).insertAdjacentHTML('beforeend', '<button class="btn big next">つぎへ ▶</button>');
+      $('.next', st).onclick = () => ctx.next();
+      await sleep(350); if (sayAfter) say(sayAfter);
+    }
+  };
+  $('#idk', st).onclick = () => {
+    if (locked) return; locked = true; setReady();
+    $$('.opt', st)[ans].classList.add('right');
+    if (word) grade(word.id, false);
+    if (onAnswer) onAnswer(false, -1);
+    ctx.answered(false); idkSay(); if (onWrong) onWrong();
+    finish(false, reveal || ' ');
+  };
   $$('.opt', st).forEach(b => b.onclick = async () => {
-    if (locked) return; locked = true;
+    if (locked) return;
+    if (!ready) { setMimi('think', 'さいごまで きいてから えらぼうね 👂'); return; }
+    locked = true;
     const i = +b.dataset.i, ok = i === ans;
     b.classList.add(ok ? 'right' : 'wrong');
     if (!ok) $$('.opt', st)[ans].classList.add('right');
@@ -515,18 +555,7 @@ function choiceQ(ctx, { prompt, opts, ans, word, autoplay, sayAfter, onWrong, on
     ctx.answered(ok);
     if (ok) cheer();
     else { boo(); if (onWrong) onWrong(); }
-    if (reveal) {
-      $('.after', st).insertAdjacentHTML('beforeend', `<div class="reveal">${reveal}</div>`);
-      $$('.after [data-say]', st).forEach(x => x.onclick = () => say(x.dataset.say));
-    }
-    if (ok && !reveal) {
-      await sleep(350); if (sayAfter) await say(sayAfter); await sleep(350);
-      if ($('#stage') === st) ctx.next();
-    } else {
-      $('.after', st).insertAdjacentHTML('beforeend', '<button class="btn big next">つぎへ ▶</button>');
-      $('.next', st).onclick = () => ctx.next();
-      await sleep(350); if (sayAfter) say(sayAfter);
-    }
+    finish(ok, reveal);
   });
 }
 
@@ -590,6 +619,11 @@ function similarWords(w, n) {
 }
 
 // つづり
+// ならべる もんだいで まちがった もじ（ことば）を 2〜3こ えらんだら、やさしく おしえる
+function gentle(n, words) {
+  if (n === 2) setMimi('think', `あれ？ ちがう ${words ? 'ことば' : 'もじ'}が まざってるかも。⌫ で けして、${words ? 'にほんごを よく 見て' : '🔊 で もういちど きいて'} みよう`);
+  else if (n === 3) { setMimi('normal', 'むずかしかったら「🤔 わからない」を おしてね。こたえを いっしょに おぼえよう'); pulseIdk(); }
+}
 function spellQ(ctx, w, opt = {}) {
   thinkQ('きいて、もじを じゅんばんに タッチ！');
   const letters = w.en.split('');
@@ -599,18 +633,29 @@ function spellQ(ctx, w, opt = {}) {
   const st = $('#stage');
   st.innerHTML = `<div class="qcard"><div>${w.em ? pic(w) : ''}</div><div class="qtext">${esc(w.ja)}</div>${playBtns()}</div>
     <div class="slots" id="slots"></div><div class="pool" id="pool"></div>
-    <div class="after"><button class="btn sm sub" id="bk">⌫ ひとつ けす</button></div>`;
+    <div class="after"><button class="btn sm sub" id="bk">⌫ ひとつ けす</button> ${idkBtn()}</div>`;
   bindPlay(st, w.en); setTimeout(() => say(w.en), 350);
+  let wrongTaps = 0;
   function draw() {
     $('#slots').innerHTML = letters.map((_, k) => `<div class="slot ${ansT[k] ? 'fill' : ''}">${ansT[k] ? ansT[k].c : ''}</div>`).join('');
     $('#pool').innerHTML = tiles.map(t => `<button class="ltile en-font ${t.used ? 'used' : ''}" data-k="${t.k}">${t.c}</button>`).join('');
     $$('#pool .ltile').forEach(b => b.onclick = () => {
       if (locked) return; const t = tiles.find(x => x.k === +b.dataset.k); if (t.used) return;
+      if (t.c !== letters[ansT.length]) { wrongTaps++; gentle(wrongTaps); }
       t.used = true; ansT.push(t); tone([600 + ansT.length * 40], 0.05); draw();
       if (ansT.length === letters.length) check();
     });
   }
   $('#bk').onclick = () => { if (locked || !ansT.length) return; ansT.pop().used = false; draw(); };
+  $('#idk', st).onclick = async () => {
+    if (locked) return; locked = true;
+    $('#slots').innerHTML = letters.map(ch => `<div class="slot fill" style="color:var(--purple)">${ch}</div>`).join('');
+    grade(w.id, false); ctx.answered(false); idkSay();
+    $('.after', st).innerHTML = '<button class="btn big next">つぎへ ▶</button>';
+    $('.next', st).onclick = () => ctx.next();
+    if (opt.requeue && !opt.requeued) { opt.requeued = true; ctx.requeue(qItem(w, 'lm', { requeued: true })); }
+    await say(w.en); await sleep(300); say(w.en, 0.55);
+  };
   async function check() {
     locked = true;
     const ok = ansT.map(t => t.c).join('') === w.en;
@@ -638,17 +683,27 @@ function orderQ(ctx, s, { listenFirst = false } = {}) {
   const st = $('#stage');
   st.innerHTML = `<div class="qcard"><div class="qsent">${esc(s.ja)}</div></div>
     <div class="slots sent" id="slots"></div><div class="pool" id="pool"></div>
-    <div class="after"><button class="btn sm sub" id="bk">⌫ ひとつ もどす</button></div>`;
+    <div class="after"><button class="btn sm sub" id="bk">⌫ ひとつ もどす</button> ${idkBtn()}</div>`;
+  let wrongTaps = 0;
   function draw() {
     $('#slots').innerHTML = ansT.length ? ansT.map(t => `<span class="chunk en-font">${esc(t.c)}</span>`).join('') : '<span class="small">ここに ならぶよ</span>';
     $('#pool').innerHTML = tiles.map((t, idx) => `<button class="ltile w en-font ${t.used ? 'used' : ''}" data-x="${idx}">${esc(t.c)}</button>`).join('');
     $$('#pool .ltile').forEach(b => b.onclick = () => {
       if (locked) return; const t = tiles[+b.dataset.x]; if (t.used) return;
+      if (t.c !== toks[ansT.length]) { wrongTaps++; gentle(wrongTaps, true); }
       t.used = true; ansT.push(t); tone([600 + ansT.length * 40], 0.05); draw();
       if (ansT.length === toks.length) check();
     });
   }
   $('#bk').onclick = () => { if (locked || !ansT.length) return; ansT.pop().used = false; draw(); };
+  $('#idk', st).onclick = async () => {
+    if (locked) return; locked = true;
+    $('#slots').innerHTML = toks.map(c => `<span class="chunk en-font" style="color:var(--purple)">${esc(c)}</span>`).join('');
+    ctx.answered(false); idkSay();
+    $('.after', st).innerHTML = `<div class="reveal">${esc(s.ja)}</div><button class="btn big next">つぎへ ▶</button>`;
+    $('.next', st).onclick = () => ctx.next();
+    await say(s.en);
+  };
   async function check() {
     locked = true;
     const ok = ansT.map(t => t.c).join(' ') === s.en;
@@ -775,7 +830,7 @@ function runStage(k) {
       if (T.st >= STAGES.length && !setDone()) {
         S.lessonDay = todayKey(); addStar(10);
         const bid = buddy().id; S.bond = S.bond || {}; S.bond[bid] = (S.bond[bid] || 0) + 1;
-        return `<div class="panel" style="font-size:20px"><b>💮 きょうの ワンセット ぜんぶ クリア！</b><br>ボーナス ⭐10 ／ ほかの あそびも できるよ<br><span class="bond">💗 ${buddy().name}との なかよしが アップ！（${S.bond[buddy().id]}）</span></div><button class="btn big mint" id="mgGo">🔍 まちがいさがしへ！</button>`;
+        return `<div class="panel" style="font-size:20px"><b>💮 きょうの ワンセット ぜんぶ クリア！</b><br>ボーナス ⭐10 ／ ほかの あそびも できるよ<br><span class="bond">💗 ${buddy().name}との なかよしが アップ！（${S.bond[buddy().id]}）</span></div><button class="btn big" id="okwGo">🍙 おかわりで 🎁ひみつの おたのしみを ひらこう ▶</button>`;
       }
       return '';
     },
@@ -807,6 +862,41 @@ function pairItem(p) {
       reveal: `こたえは <b class="en-font">${esc(word)}</b>。 くらべて きいてみよう：<div style="display:flex;gap:10px;margin-top:8px"><button class="btn sm purple en-font" data-say="${esc(p[0])}">🔊 ${esc(p[0])}</button><button class="btn sm purple en-font" data-say="${esc(p[2])}">🔊 ${esc(p[2])}</button></div>`,
     });
   };
+}
+
+/* ========== おかわり（ワンセットのあと） ==========
+   1かい クリアすると その日の「ひみつの おたのしみ（まちがいさがし）」が ひらく。
+   おかわりは れんしゅうなので、ふくしゅうの 日数は のばさない（まちがえたら あしたに もう1かい）。 */
+const okwToday = () => (S.okw && S.okw.d === todayKey()) ? S.okw.n : 0;
+const mgUnlocked = () => setDone() && okwToday() >= 1;
+const mgDoneToday = () => S.mg && S.mg.d === todayKey() && S.mg.n >= (S.set.mgMax || 1);
+function okwCard() {
+  if (!mgUnlocked()) return `<div class="okw"><div class="gift shake">🎁</div><div class="okw-t"><b>おかわりチャレンジ！</b><br>あと <b>1かい</b> がんばると…<br><b class="secret">ひみつの おたのしみ</b> が ひらくよ</div></div>
+    <button class="btn big" id="moreBtn">🍙 おかわり 10もん ▶</button>`;
+  if (!mgDoneToday()) return `<div class="okw open"><div class="gift pop">🎁</div><div class="okw-t"><b>ひみつの おたのしみ が ひらいた！</b><br>なにが はいってるかな？</div></div>
+    <button class="btn big mint" id="giftBtn">🎁 あけてみる！</button><button class="btn sm sub" id="moreBtn" style="margin-top:10px">🍙 もっと おかわり</button>`;
+  return `<div class="okw"><div class="gift">⭐</div><div class="okw-t"><b>おかわりで スターあつめ</b><br>10もん ぜんぶ 正かいで ⭐ボーナス！</div></div>
+    <button class="btn" id="moreBtn">🍙 おかわり ▶</button>`;
+}
+function okawari() {
+  const T = todaySet(), now = Date.now();
+  const today = [...T.fresh, ...T.due].map(W).filter(Boolean);
+  const weak = WORDS.filter(w => seen(w) && inLevel(w) && !today.includes(w)).sort((a, b) => (S.words[a.id].b - S.words[b.id].b) || (S.words[b.id].ng - S.words[a.id].ng)).slice(0, 12);
+  let pool = shuffle(today).slice(0, 5).concat(shuffle(weak).slice(0, 8 - Math.min(5, today.length)));
+  if (pool.length < 8) pool = pool.concat(shuffle(WORDS.filter(w => inLevel(w) && seen(w) && !pool.includes(w))).slice(0, 8 - pool.length));
+  const items = pool.map(w => qItem(w, anyType(w)));
+  const d = pick(DIALOGS.filter(x => (x.lv || 5) >= S.set.lvl || x.u)), sn = pick(SENTENCES.filter(x => (x.lv || 5) >= S.set.lvl || x.u));
+  items.push(ctx => dialogQ(ctx, d), ctx => orderQ(ctx, sn));
+  const first = okwToday() === 0;
+  runSeq({
+    title: 'おかわり', items: shuffle(items), bonus: 3, practice: true, again: null,
+    intro: first ? 'おかわり スタート！ クリアすると… 🎁 が まってるよ' : 'もういっちょ！ ⭐を あつめよう',
+    onFinish: () => {
+      S.okw = { d: todayKey(), n: okwToday() + 1 };
+      if (first) return `<div class="panel center"><div class="gift big pop">🎁</div><b style="font-size:20px">ひみつの おたのしみ が ひらいた！</b></div><button class="btn big mint" id="giftGo">🎁 あけてみる！</button>`;
+      return '';
+    },
+  });
 }
 
 /* ========== ゲームいろいろ ========== */
@@ -910,7 +1000,7 @@ function grammarQ(ctx, q, { fromReview = false } = {}) {
       if (!key) return;
       const r = S.review.find(x => x.k === key);
       if (!ok) { // まちがえたら「おうちの人と見る」に入れる
-        const pickTxt = q.o[order[i]];
+        const pickTxt = i >= 0 ? q.o[order[i]] : 'わからない';
         if (r) { r.n++; r.d = todayKey(); r.pick = pickTxt; } else S.review.push({ k: key, n: 1, d: todayKey(), pick: pickTxt });
         if (S.review.length > 40) S.review.shift();
       } else if (fromReview && r) { S.review = S.review.filter(x => x !== r); }
@@ -1043,6 +1133,7 @@ function dress() {
 }
 
 /* ========== せってい ========== */
+let DEBUG = false, verTaps = [];
 function settings() {
   const vs = VOICES.length ? VOICES : (('speechSynthesis' in window) ? (loadVoices(), VOICES) : []);
   const profs = Object.entries(root.profiles);
@@ -1053,11 +1144,19 @@ function settings() {
     <div class="field"><label>めざす級</label>${seg('sLv', [[5, '英検5級'], [4, '英検4級']], S.set.lvl)}</div>
     <div class="field"><label>1回の あたらしいことば</label>${seg('sNew', [[3, '3こ'], [5, '5こ'], [8, '8こ']], S.set.nNew)}</div>
     <div class="field"><label>1日の ふくしゅう（さいだい）</label>${seg('sRev', [[12, '12こ'], [20, '20こ'], [30, '30こ']], S.set.rev || 20)}<div class="small">ふくしゅうが たまると、あたらしいことばは じどうで へります</div></div>
-    <div class="field"><label>まちがいさがし（1日の まい数）</label>${seg('sMg', [[1, '1まい'], [2, '2まい'], [3, '3まい']], S.set.mgMax)}</div>
     <div class="field"><label>よみあげの はやさ</label>${seg('sRate', [[0.7, 'ゆっくり'], [0.85, 'ふつう'], [1, 'はやい']], S.set.rate)}</div>
     <div class="switch"><b>こうかおん</b><button class="tog ${S.set.sfx ? 'on' : ''}" id="sSfx"></button></div>
-    <div class="switch"><span><b>ワンセットが おわるまで ゲームを ロック</b><br><span class="small">おうちの人用。ずかん・きせかえ・ABC は いつでも ひらけます</span></span><button class="tog ${S.set.lock ? 'on' : ''}" id="sLock"></button></div>
     ${BOOKWORDS.length ? `<div class="switch"><span><b>あたらしいことばは 本の じゅんばんで</b><br><span class="small">本のことば ${BOOKWORDS.length}こ</span></span><button class="tog ${S.set.src === 'book' ? 'on' : ''}" id="sSrc"></button></div>` : ''}
+  </div>
+  <div class="panel">
+    <b>つかう人</b>
+    <div class="list" style="margin-top:8px">${profs.map(([id, p]) => `<button class="row-btn" data-p="${id}"><span class="i">${id === root.cur ? '🐰' : '👤'}</span><span class="t">${esc(p.name || '（なまえなし）')}</span><span class="small">⭐${p.earned}</span></button>`).join('')}</div>
+    <button class="btn sm sub" id="addP" style="margin-top:10px">＋ 人を ふやす</button>
+  </div>
+  ${DEBUG ? `<div class="panel" style="border:3px dashed var(--purple)">
+    <b>🔧 おうちの人モード</b><div class="small">バージョンを 5かい つづけて おすと 出たり きえたり します</div>
+    <div class="switch"><span><b>ワンセットが おわるまで ゲームを ロック</b><br><span class="small">ずかん・きせかえ・ABC・おうちの人と見る は いつでも ひらけます</span></span><button class="tog ${S.set.lock ? 'on' : ''}" id="sLock"></button></div>
+    <div class="field"><label>ひみつの おたのしみ（まちがいさがし）1日の まい数</label>${seg('sMg', [[1, '1まい'], [2, '2まい'], [3, '3まい']], S.set.mgMax)}</div>
   </div>
   <div class="panel">
     <b>こえ（おうちの人へ）</b>
@@ -1069,11 +1168,6 @@ function settings() {
   <div class="panel">
     <b>なかまたち</b><div class="small">アプリを ひらいた日ごとに じゅんばんに こうたいします。タッチすると きょうの なかまを かえられます。</div>
     <div class="buddies">${BUDDIES.map((B, k) => `<button class="bud ${k === (S.bi || 0) ? 'on' : ''}" data-b="${k}"><div class="mimi mood-happy">${mimiSVG([], B.id)}</div><b>${B.name}</b><span class="small">${B.who}</span><span class="bond">💗${(S.bond || {})[B.id] || 0}</span></button>`).join('')}</div>
-  </div>
-  <div class="panel">
-    <b>つかう人</b>
-    <div class="list" style="margin-top:8px">${profs.map(([id, p]) => `<button class="row-btn" data-p="${id}"><span class="i">${id === root.cur ? '🐰' : '👤'}</span><span class="t">${esc(p.name || '（なまえなし）')}</span><span class="small">⭐${p.earned}</span></button>`).join('')}</div>
-    <button class="btn sm sub" id="addP" style="margin-top:10px">＋ 人を ふやす</button>
   </div>
   <div class="panel">
     <b>🔧 おためしモード（おうちの人用）</b>
@@ -1089,28 +1183,37 @@ function settings() {
     <b>リセット</b>
     <p class="small">いまの人（${esc(S.name)}）の きろくを ぜんぶ けします。</p>
     <button class="btn sm sub" id="reset">きろくを けす</button>
-  </div>
-  <p class="small center">ここえいご v${APP_VER}／ことば ${WORDS.length}こ・かいわ ${DIALOGS.length}・ならべかえ ${SENTENCES.length}・ぶんぽう ${GRAMMAR.length}</p></div>`);
+  </div>` : ''}
+  <p class="small center" id="ver" style="padding:10px 0">ここえいご v${APP_VER}／ことば ${WORDS.length}こ・かいわ ${DIALOGS.length}・ならべかえ ${SENTENCES.length}・ぶんぽう ${GRAMMAR.length}</p></div>`);
+  const segB = (id, fn) => $$(`#${id} button`).forEach(b => b.onclick = () => { $$(`#${id} button`).forEach(x => x.classList.toggle('on', x === b)); fn(b.dataset.v); save(); });
+  const reset1 = () => { if (S.today && !S.today.st) S.today = null; };
+  function bindBasic() {
+    $('#sName').onchange = e => { const v = e.target.value.trim(); if (v) { S.name = v; save(); } };
+    segB('sLv', v => { S.set.lvl = +v; reset1(); });
+    segB('sNew', v => { S.set.nNew = +v; reset1(); });
+    segB('sRev', v => { S.set.rev = +v; reset1(); });
+    segB('sRate', v => { S.set.rate = +v; say('Hello! How are you?'); });
+    $('#sSfx').onclick = e => { S.set.sfx = !S.set.sfx; e.currentTarget.classList.toggle('on', S.set.sfx); save(); sfx('ok'); };
+    $$('[data-p]').forEach(b => b.onclick = () => { if (trial) { toast('おためしモードを オフにしてね'); return; } root.cur = b.dataset.p; S = root.profiles[root.cur]; save(); home(); });
+    $('#addP').onclick = () => {
+      if (trial) { toast('おためしモードを オフにしてね'); return; }
+      const n = prompt('なまえを 入れてね'); if (!n || !n.trim()) return;
+      const id = 'p' + Date.now().toString(36); root.profiles[id] = freshProfile(n.trim()); root.cur = id; S = root.profiles[id]; save(); home();
+    };
+  }
+  bindBasic();
+  $('#ver').onclick = () => {
+    const now = Date.now(); verTaps = verTaps.filter(t => now - t < 3000); verTaps.push(now);
+    if (verTaps.length >= 5) { verTaps = []; DEBUG = !DEBUG; toast(DEBUG ? '🔧 おうちの人モード' : 'ふつうの せってい'); settings(); }
+  };
+  if (!DEBUG) return;
   const segBind = (id, fn) => $$(`#${id} button`).forEach(b => b.onclick = () => { $$(`#${id} button`).forEach(x => x.classList.toggle('on', x === b)); fn(b.dataset.v); save(); });
-  $('#sName').onchange = e => { const v = e.target.value.trim(); if (v) { S.name = v; save(); } };
   const reset0 = () => { if (S.today && !S.today.st) S.today = null; };
-  segBind('sLv', v => { S.set.lvl = +v; reset0(); });
-  segBind('sNew', v => { S.set.nNew = +v; reset0(); });
   segBind('sMg', v => S.set.mgMax = +v);
-  segBind('sRev', v => { S.set.rev = +v; reset0(); });
-  segBind('sRate', v => { S.set.rate = +v; say('Hello! How are you?'); });
-  $('#sSfx').onclick = e => { S.set.sfx = !S.set.sfx; e.currentTarget.classList.toggle('on', S.set.sfx); save(); sfx('ok'); };
   $$('.bud').forEach(b => b.onclick = () => { S.bi = +b.dataset.b; S.bd = todayKey(); save(); settings(); });
   $('#sLock').onclick = e => { S.set.lock = !S.set.lock; e.currentTarget.classList.toggle('on', S.set.lock); save(); };
-  if ($('#sSrc')) $('#sSrc').onclick = e => { S.set.src = S.set.src === 'book' ? 'all' : 'book'; e.currentTarget.classList.toggle('on', S.set.src === 'book'); S.today = null; save(); };
   $('#sVoice').onchange = e => { S.set.voice = e.target.value; save(); say('Hello! I am Mimi.'); };
   $('#sTest').onclick = () => say('Hello! I am Mimi. Let\'s learn English together!');
-  $$('[data-p]').forEach(b => b.onclick = () => { if (trial) { toast('おためしモードを オフにしてね'); return; } root.cur = b.dataset.p; S = root.profiles[root.cur]; save(); home(); });
-  $('#addP').onclick = () => {
-    if (trial) { toast('おためしモードを オフにしてね'); return; }
-    const n = prompt('なまえを 入れてね'); if (!n || !n.trim()) return;
-    const id = 'p' + Date.now().toString(36); root.profiles[id] = freshProfile(n.trim()); root.cur = id; S = root.profiles[id]; save(); home();
-  };
   $('#sTrial').onclick = () => {
     if (!trial) { save(); trial = true; S = JSON.parse(JSON.stringify(S)); toast('おためしモード オン'); }
     else { trial = false; loadRoot(); toast('おためしモード オフ（もとにもどしました）'); }
@@ -1119,7 +1222,7 @@ function settings() {
   $('#exp').onclick = () => {
     const data = trial ? localStorage.getItem(KEY) : (save(), localStorage.getItem(KEY));
     const blob = new Blob([data || '{}'], { type: 'application/json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `mimi-eigo-backup-${todayKey()}.json`;
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `kokoeigo-backup-${todayKey()}.json`;
     document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   };
   $('#imp').onclick = () => $('#impF').click();

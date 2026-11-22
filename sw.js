@@ -1,5 +1,5 @@
 // オフラインでも動くようにするしくみ（更新したら VERSION の数字を上げる）
-const VERSION = 'kokoeigo-v2.1.0';
+const VERSION = 'kokoeigo-v2.2.0';
 const FILES = ['./', 'index.html', 'app.js', 'data.js', 'book.js', 'pics.js', 'mg.js', 'buddies.js', 'model3d.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
