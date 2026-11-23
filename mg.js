@@ -510,7 +510,7 @@ ${p.inner[0] ? '<circle cx="-12" cy="-53" r="3" fill="#ffc9de"/>' : ''}${p.inner
   }
   function bindCard() { const c = $('#mgCard'); if (c) c.onclick = open; }
   function open() {
-    if (!mgUnlocked() && !trial) { toast('ワンセットと おかわりを クリアすると ひらくよ！'); return; }
+    if (!mgUnlocked() && !trial) { toast('ワンセットと もう1かいを クリアすると あそべるよ！'); return; }
     const st = state();
     if (st.n >= maxN()) return play(st.n - 1, true);
     play(st.n, false);

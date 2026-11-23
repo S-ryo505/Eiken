@@ -1,6 +1,6 @@
 'use strict';
 /* ===== ここえいご  app.js ===== */
-const APP_VER = '2.2.0';
+const APP_VER = '2.3.0';
 const $ = (s, e = document) => e.querySelector(s);
 const $$ = (s, e = document) => [...e.querySelectorAll(s)];
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -92,7 +92,30 @@ function save() {
 const TITLES = ['ひよっこ', 'ルーキー', 'チャレンジャー', 'がんばりや', 'ことばハンター', 'みみじょうず', 'えいごのたまご', 'えいごのつばさ', 'リスニングスター', 'えいごのたつじん', 'なかまの しんゆう'];
 const level = () => 1 + Math.floor(S.earned / 40);
 const title = () => TITLES[Math.min(TITLES.length - 1, level() - 1)];
-function addStar(n) { S.stars += n; S.earned += n; const el = $('#starN'); if (el) el.textContent = S.stars; }
+function addStar(n) {
+  S.stars += n; S.earned += n; const el = $('#starN'); if (el) el.textContent = S.stars;
+  const L = dlog(); L.st = (L.st || 0) + n; checkReward();
+}
+/* ---- いつ・どのくらい やったかの きろく（おうちの人が グラフで見る） ---- */
+function dlog(d = todayKey()) { S.log = S.log || {}; return S.log[d] || (S.log[d] = { q: 0, ok: 0, ms: 0, h: {}, st: 0 }); }
+let lastAns = 0;
+function logAnswer(ok) {
+  const L = dlog(), now = Date.now(), hr = new Date().getHours();
+  L.q++; if (ok) L.ok++; L.h[hr] = (L.h[hr] || 0) + 1;
+  L.ms += lastAns ? Math.min(now - lastAns, 60000) : 15000; // 1もん さいだい 60びょう として かぞえる
+  lastAns = now;
+}
+/* ---- パパからの ごほうび（⭐の数で） ----
+   1日に カウントする⭐は さいだい rwCap こ（おかわりや ゲームの やりすぎで ふえすぎないように） */
+const RW = () => ({ stars: S.set.rwStars || 400, yen: S.set.rwYen || 100, cap: S.set.rwCap || 80 });
+function rewardPts() { const c = RW().cap; return Object.values(S.log || {}).reduce((a, L) => a + Math.min(L.st || 0, c), 0); }
+function checkReward() {
+  const r = RW(), n = Math.floor(rewardPts() / r.stars); S.rw = S.rw || [];
+  while (S.rw.length < n) {
+    S.rw.push({ d: todayKey(), yen: r.yen, paid: false });
+    setTimeout(() => { confetti(); sfx('fan'); modal(`<div class="center"><div style="font-size:64px">🎉</div><b style="font-size:22px">⭐${r.stars}こ たっせい！</b><p>パパから ごほうび ${r.yen}えん！<br>パパに この がめんを 見せてね</p><button class="btn big" onclick="closeModal()">やったー！</button></div>`); }, 600);
+  }
+}
 function markActive() {
   const t = todayKey();
   if (S.lastDay === t) return;
@@ -401,6 +424,7 @@ function home() {
    ${doneToday ? okwCard() : `<button class="btn big" id="setBtn">${T.st ? `つづきから（${T.st + 1}/${STAGES.length}）▶` : 'スタート ▶'}</button>`}
   </div>
   <div class="week">${week}</div>
+  ${(() => { const r = RW(), pts = rewardPts(), cur = pts % r.stars; return `<div class="rwline">🎁 ⭐${r.stars}こで パパから ごほうび！ <b>${cur}</b> / ${r.stars}<div class="meter" style="height:8px;margin:3px 0 0"><i style="width:${cur / r.stars * 100}%"></i></div><span class="small">※ 1日 ⭐${r.cap}こまで かぞえるよ</span></div>`; })()}
   <div id="voiceNote"></div>
   <div class="sec-title">${locked ? '🔒 ワンセットが おわったら あそべるよ' : 'あそびながら まなぼう'}</div>
   <div class="grid">${modes.map(m => `<button class="tile ${locked && !FREE.includes(m[0]) ? 'locked' : ''}" data-m="${m[0]}">${m[0] === 'review' && S.review.length ? `<span class="badge">${S.review.length}</span>` : ''}<div class="i">${m[1]}</div><div class="n">${m[2]}</div><div class="h">${m[3]}</div></button>`).join('')}</div>
@@ -470,7 +494,7 @@ function runSeq({ title, items, bonus = 2, onFinish, again, intro, nextStep, pra
     next: () => { i++; save(); step(); },
     answered: ok => {
       answered++; if (ok) score++;
-      const t = todayKey(); S.days[t] = (S.days[t] || 0) + 1;
+      const t = todayKey(); S.days[t] = (S.days[t] || 0) + 1; logAnswer(ok);
       if (ctx.sec) { secs[ctx.sec] = secs[ctx.sec] || [0, 0]; secs[ctx.sec][1]++; if (ok) secs[ctx.sec][0]++; }
     },
     requeue: f => items.push(f),
@@ -828,9 +852,9 @@ function runStage(k) {
     onFinish: () => {
       T.st = Math.max(T.st, k + 1);
       if (T.st >= STAGES.length && !setDone()) {
-        S.lessonDay = todayKey(); addStar(10);
+        S.lessonDay = todayKey(); dlog().set = Date.now(); addStar(10);
         const bid = buddy().id; S.bond = S.bond || {}; S.bond[bid] = (S.bond[bid] || 0) + 1;
-        return `<div class="panel" style="font-size:20px"><b>💮 きょうの ワンセット ぜんぶ クリア！</b><br>ボーナス ⭐10 ／ ほかの あそびも できるよ<br><span class="bond">💗 ${buddy().name}との なかよしが アップ！（${S.bond[buddy().id]}）</span></div><button class="btn big" id="okwGo">🍙 おかわりで 🎁ひみつの おたのしみを ひらこう ▶</button>`;
+        return `<div class="panel" style="font-size:20px"><b>💮 きょうの ワンセット ぜんぶ クリア！</b><br>ボーナス ⭐10 ／ ほかの あそびも できるよ<br><span class="bond">💗 ${buddy().name}との なかよしが アップ！（${S.bond[buddy().id]}）</span></div><button class="btn big" id="okwGo">🍙 もう1かい できるよ！ ▶</button>`;
       }
       return '';
     },
@@ -865,18 +889,18 @@ function pairItem(p) {
 }
 
 /* ========== おかわり（ワンセットのあと） ==========
-   1かい クリアすると その日の「ひみつの おたのしみ（まちがいさがし）」が ひらく。
+   ワンセットのあとに「もう1かい」できる。1かい クリアすると その日の まちがいさがしが あそべる。
    おかわりは れんしゅうなので、ふくしゅうの 日数は のばさない（まちがえたら あしたに もう1かい）。 */
 const okwToday = () => (S.okw && S.okw.d === todayKey()) ? S.okw.n : 0;
 const mgUnlocked = () => setDone() && okwToday() >= 1;
 const mgDoneToday = () => S.mg && S.mg.d === todayKey() && S.mg.n >= (S.set.mgMax || 1);
 function okwCard() {
-  if (!mgUnlocked()) return `<div class="okw"><div class="gift shake">🎁</div><div class="okw-t"><b>おかわりチャレンジ！</b><br>あと <b>1かい</b> がんばると…<br><b class="secret">ひみつの おたのしみ</b> が ひらくよ</div></div>
-    <button class="btn big" id="moreBtn">🍙 おかわり 10もん ▶</button>`;
-  if (!mgDoneToday()) return `<div class="okw open"><div class="gift pop">🎁</div><div class="okw-t"><b>ひみつの おたのしみ が ひらいた！</b><br>なにが はいってるかな？</div></div>
-    <button class="btn big mint" id="giftBtn">🎁 あけてみる！</button><button class="btn sm sub" id="moreBtn" style="margin-top:10px">🍙 もっと おかわり</button>`;
-  return `<div class="okw"><div class="gift">⭐</div><div class="okw-t"><b>おかわりで スターあつめ</b><br>10もん ぜんぶ 正かいで ⭐ボーナス！</div></div>
-    <button class="btn" id="moreBtn">🍙 おかわり ▶</button>`;
+  if (!mgUnlocked()) return `<div class="okw"><div class="gift shake">🍙</div><div class="okw-t"><b>もう1かい できるよ！</b><br>おかわり 10もんで ⭐を もっと あつめよう</div></div>
+    <button class="btn big" id="moreBtn">🍙 もう1かい やる ▶</button>`;
+  if (!mgDoneToday()) return `<div class="okw open"><div class="gift pop">🔍</div><div class="okw-t"><b>まちがいさがし が できるよ！</b><br>みつけられるかな？</div></div>
+    <button class="btn big mint" id="giftBtn">🔍 あそぶ</button><button class="btn sm sub" id="moreBtn" style="margin-top:10px">🍙 もう1かい やる</button>`;
+  return `<div class="okw"><div class="gift">🍙</div><div class="okw-t"><b>もう1かい できるよ！</b><br>⭐を もっと あつめよう</div></div>
+    <button class="btn" id="moreBtn">🍙 もう1かい やる ▶</button>`;
 }
 function okawari() {
   const T = todaySet(), now = Date.now();
@@ -890,10 +914,10 @@ function okawari() {
   const first = okwToday() === 0;
   runSeq({
     title: 'おかわり', items: shuffle(items), bonus: 3, practice: true, again: null,
-    intro: first ? 'おかわり スタート！ クリアすると… 🎁 が まってるよ' : 'もういっちょ！ ⭐を あつめよう',
+    intro: first ? 'もう1かい いってみよう！' : 'もういっちょ！ ⭐を あつめよう',
     onFinish: () => {
       S.okw = { d: todayKey(), n: okwToday() + 1 };
-      if (first) return `<div class="panel center"><div class="gift big pop">🎁</div><b style="font-size:20px">ひみつの おたのしみ が ひらいた！</b></div><button class="btn big mint" id="giftGo">🎁 あけてみる！</button>`;
+      if (first) return `<div class="panel center"><div class="gift big pop">🔍</div><b style="font-size:20px">まちがいさがし が できるように なったよ！</b></div><button class="btn big mint" id="giftGo">🔍 あそぶ</button>`;
       return '';
     },
   });
@@ -1133,6 +1157,49 @@ function dress() {
 }
 
 /* ========== せってい ========== */
+/* ---- おうちの人むけ グラフ（いつ・どのくらい） ---- */
+function drawCharts() {
+  const el = $('#chartPanel'); if (!el) return;
+  const N = 30, days = [];
+  for (let k = N - 1; k >= 0; k--) { const d = dayOffset(-k); const L = (S.log || {})[d] || { q: S.days[d] || 0, ms: 0, h: {} }; days.push({ d, q: L.q || 0, min: Math.round((L.ms || 0) / 60000), set: !!L.set || (S.lessonDay === d), h: L.h || {} }); }
+  const act = days.filter(x => x.q > 0), setN = days.filter(x => x.set).length;
+  let best = 0, cur = 0; days.forEach(x => { cur = x.q > 0 ? cur + 1 : 0; best = Math.max(best, cur); });
+  const avgMin = act.length ? Math.round(act.reduce((a, x) => a + x.min, 0) / act.length) : 0;
+  const maxQ = Math.max(10, ...days.map(x => x.q));
+  // 1) 日ごとの もんだい数（棒）＋ワンセットたっせい（✓）
+  const W = 330, H = 150, pl = 26, pb = 22, bw = (W - pl) / N;
+  const yt = [0, Math.round(maxQ / 2), maxQ];
+  let bars = yt.map(v => { const y = H - pb - (v / maxQ) * (H - pb - 8); return `<line x1="${pl}" x2="${W}" y1="${y}" y2="${y}" stroke="#eee6ee" stroke-width="1"/><text x="${pl - 4}" y="${y}" font-size="9" fill="#7a6580" text-anchor="end" dominant-baseline="central">${v}</text>`; }).join('');
+  days.forEach((x, i) => {
+    const h = (x.q / maxQ) * (H - pb - 8), X = pl + i * bw + 1.5, wd = bw - 3, Y = H - pb - h;
+    if (x.q) bars += `<path d="M${X} ${H - pb} V${Y + 3} Q${X} ${Y} ${X + 3} ${Y} H${X + wd - 3} Q${X + wd} ${Y} ${X + wd} ${Y + 3} V${H - pb} Z" fill="#8a7bff"/>`;
+    if (x.set) bars += `<text x="${X + wd / 2}" y="${H - pb + 9}" font-size="9" text-anchor="middle" fill="#1fa774" font-weight="800">✓</text>`;
+    const dt = new Date(x.d); if (dt.getDay() === 1 || i === N - 1) bars += `<text x="${i === N - 1 ? W : X + wd / 2}" y="${H - 2}" font-size="8.5" text-anchor="${i === N - 1 ? 'end' : 'middle'}" fill="#7a6580">${x.d.slice(5).replace('-', '/')}</text>`;
+    bars += `<rect class="hit" data-i="${i}" x="${pl + i * bw}" y="0" width="${bw}" height="${H}" fill="transparent"/>`;
+  });
+  // 2) なんじに やったか（日 × 時間 の マス）
+  const H0 = 6, H1 = 22, cols = H1 - H0 + 1, rowsD = days.slice(-14), cw = (W - 40) / cols, ch = 11;
+  const maxH = Math.max(1, ...rowsD.flatMap(x => Object.values(x.h)));
+  const ramp = ['#f4f1fb', '#d6cffd', '#a596ff', '#7a68f0', '#5543c9'];
+  let grid = '';
+  for (let c = 0; c <= cols; c += 3) grid += `<text x="${40 + c * cw}" y="9" font-size="8.5" fill="#7a6580" text-anchor="middle">${H0 + c}じ</text>`;
+  rowsD.forEach((x, r) => {
+    const y = 14 + r * (ch + 2);
+    grid += `<text x="36" y="${y + ch / 2}" font-size="8.5" fill="#7a6580" text-anchor="end" dominant-baseline="central">${x.d.slice(5).replace('-', '/')}</text>`;
+    for (let c = 0; c < cols; c++) { const v = x.h[H0 + c] || 0, lv = v ? Math.min(4, 1 + Math.floor(3 * v / maxH)) : 0;
+      grid += `<rect x="${40 + c * cw + 1}" y="${y}" width="${cw - 2}" height="${ch}" rx="2" fill="${ramp[lv]}"><title>${x.d} ${H0 + c}じ台：${v}もん</title></rect>`; }
+  });
+  const GH = 14 + rowsD.length * (ch + 2);
+  el.innerHTML = `<b>📊 がくしゅうの きろく（さいきん30日）</b>
+    <div class="stats"><div><b>${act.length}</b><span>やった日</span></div><div><b>${setN}</b><span>ワンセット<br>たっせい日</span></div><div><b>${avgMin}</b><span>1日へいきん<br>（ふん）</span></div><div><b>${best}</b><span>さいちょう<br>れんぞく</span></div></div>
+    <div class="small" style="margin-top:8px">1日の もんだい数（✓＝ワンセット たっせい）。ぼうを おすと くわしく 出ます</div>
+    <svg viewBox="0 0 ${W} ${H}" class="chart" id="barChart">${bars}</svg><div class="tip small" id="barTip">　</div>
+    <div class="small" style="margin-top:6px">なんじに やったか（さいきん14日、こい色ほど たくさん）</div>
+    <svg viewBox="0 0 ${W} ${GH}" class="chart">${grid}</svg>
+    <div class="legend small">すくない <i style="background:${ramp[1]}"></i><i style="background:${ramp[2]}"></i><i style="background:${ramp[3]}"></i><i style="background:${ramp[4]}"></i> おおい</div>
+    <div class="small" style="margin-top:6px">※ 時間は こたえた かんかくから 計算した めやすです（1もん さいだい1分）。v2.3.0 より前の日は もんだい数だけ わかります。</div>`;
+  $$('#barChart .hit').forEach(r => { const f = () => { const x = days[+r.dataset.i]; $('#barTip').textContent = `${x.d.slice(5).replace('-', '/')}：${x.q}もん・やく${x.min}ふん${x.set ? '・ワンセット ✓' : ''}`; $$('#barChart .hit').forEach(z => z.setAttribute('fill', 'transparent')); r.setAttribute('fill', 'rgba(138,123,255,.12)'); }; r.addEventListener('pointerenter', f); r.addEventListener('click', f); });
+}
 let DEBUG = false, verTaps = [];
 function settings() {
   const vs = VOICES.length ? VOICES : (('speechSynthesis' in window) ? (loadVoices(), VOICES) : []);
@@ -1156,8 +1223,14 @@ function settings() {
   ${DEBUG ? `<div class="panel" style="border:3px dashed var(--purple)">
     <b>🔧 おうちの人モード</b><div class="small">バージョンを 5かい つづけて おすと 出たり きえたり します</div>
     <div class="switch"><span><b>ワンセットが おわるまで ゲームを ロック</b><br><span class="small">ずかん・きせかえ・ABC・おうちの人と見る は いつでも ひらけます</span></span><button class="tog ${S.set.lock ? 'on' : ''}" id="sLock"></button></div>
-    <div class="field"><label>ひみつの おたのしみ（まちがいさがし）1日の まい数</label>${seg('sMg', [[1, '1まい'], [2, '2まい'], [3, '3まい']], S.set.mgMax)}</div>
+    <div class="field"><label>ごほうび：⭐なんこで</label>${seg('sRwS', [[300, '300こ'], [400, '400こ'], [500, '500こ']], RW().stars)}</div>
+    <div class="field"><label>ごほうび：いくら</label>${seg('sRwY', [[50, '50円'], [100, '100円'], [200, '200円']], RW().yen)}</div>
+    <div class="field"><label>1日に かぞえる⭐の上限</label>${seg('sRwC', [[60, '60こ'], [80, '80こ'], [100, '100こ']], RW().cap)}</div>
+    <div class="small">いまの ごほうび⭐：${rewardPts()}こ（上限こみ）</div>
+    ${(S.rw || []).length ? `<div class="list" style="margin-top:6px">${S.rw.map((x, i) => `<div class="row-btn"><span class="i">🎁</span><span class="t">${x.d.slice(5).replace('-', '/')}　${x.yen}円</span><button class="btn sm ${x.paid ? 'mint' : 'sub'}" data-rw="${i}">${x.paid ? 'わたした ✓' : 'まだ'}</button></div>`).join('')}</div>` : '<div class="small">まだ ごほうびは ありません</div>'}
+    <div class="field"><label>まちがいさがし 1日の まい数</label>${seg('sMg', [[1, '1まい'], [2, '2まい'], [3, '3まい']], S.set.mgMax)}</div>
   </div>
+  <div class="panel" id="chartPanel"></div>
   <div class="panel">
     <b>こえ（おうちの人へ）</b>
     <div class="field"><select id="sVoice"><option value="">じどう（Google 英語(米国) をゆうせん）</option>${vs.map(v => `<option value="${esc(v.name)}" ${v.name === S.set.voice ? 'selected' : ''}>${esc(v.name)}（${esc(v.lang)}）</option>`).join('')}</select></div>
@@ -1210,6 +1283,11 @@ function settings() {
   const segBind = (id, fn) => $$(`#${id} button`).forEach(b => b.onclick = () => { $$(`#${id} button`).forEach(x => x.classList.toggle('on', x === b)); fn(b.dataset.v); save(); });
   const reset0 = () => { if (S.today && !S.today.st) S.today = null; };
   segBind('sMg', v => S.set.mgMax = +v);
+  segBind('sRwS', v => { S.set.rwStars = +v; settings(); });
+  segBind('sRwY', v => S.set.rwYen = +v);
+  segBind('sRwC', v => { S.set.rwCap = +v; settings(); });
+  $$('[data-rw]').forEach(b => b.onclick = () => { const x = S.rw[+b.dataset.rw]; x.paid = !x.paid; save(); settings(); });
+  drawCharts();
   $$('.bud').forEach(b => b.onclick = () => { S.bi = +b.dataset.b; S.bd = todayKey(); save(); settings(); });
   $('#sLock').onclick = e => { S.set.lock = !S.set.lock; e.currentTarget.classList.toggle('on', S.set.lock); save(); };
   $('#sVoice').onchange = e => { S.set.voice = e.target.value; save(); say('Hello! I am Mimi.'); };
@@ -1244,6 +1322,7 @@ function settings() {
 const FREE = ['zukan', 'dress', 'abc', 'review']; // ワンセット前でも ひらけるもの
 const MODES = { listen: gListen, pairs: gPairs, meaning: gMeaning, spell: gSpell, dialog: gDialog, order: gOrder, abc, grammar, review, zukan, mock: mockMenu, dress };
 loadRoot();
+if (!S.log) { S.log = {}; if (S.lastDay === todayKey()) dlog().st = Math.min(S.earned, RW().cap); }
 home();
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => { });
