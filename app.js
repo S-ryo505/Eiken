@@ -1,6 +1,6 @@
 'use strict';
 /* ===== ここえいご  app.js ===== */
-const APP_VER = '2.3.0';
+const APP_VER = '2.4.0';
 const $ = (s, e = document) => e.querySelector(s);
 const $$ = (s, e = document) => [...e.querySelectorAll(s)];
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -176,42 +176,132 @@ function say(text, rate) {
 }
 function stopVoice() { speakId++; try { speechSynthesis.cancel(); } catch (e) { } talk(false); }
 
-/* ---------- マイク（はなすれんしゅう） ---------- */
+/* ---------- マイク（はなすれんしゅう） ----------
+   ・「どうぞ！」が でてから はなす（じゅんび前の こえは ひろえないため）
+   ・とちゅうの ききとりも ひろう／9びょう まで まつ
+   ・つづりが すこし ちがっても 音が ちかければ OK（おなじ音の ことば・数字も OK）
+   ・ちがったら おてほんと きこえた ことばを くらべて、日本人が まちがえやすい 音の コツを 出す */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-function hear() {
+const NUMW = 'zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen'.split(' ');
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+const numWord = n => n < 20 ? NUMW[n] : n === 100 ? 'hundred' : TENS[Math.floor(n / 10)] + (n % 10 ? ' ' + NUMW[n % 10] : '');
+const norm = s => String(s).toLowerCase().replace(/[-_]/g, ' ').replace(/\b\d{1,3}\b/g, d => +d <= 100 ? numWord(+d) : d).replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+const HOMO = [['eye', 'i', 'aye'], ['two', 'to', 'too'], ['four', 'for', 'fore'], ['one', 'won'], ['eight', 'ate'], ['bee', 'be', 'b'], ['sea', 'see', 'c'], ['tea', 'tee', 't'],
+  ['pear', 'pair', 'pare'], ['flour', 'flower'], ['right', 'write', 'rite'], ['night', 'knight'], ['hi', 'high'], ['blue', 'blew'], ['meat', 'meet'], ['week', 'weak'], ['sun', 'son'],
+  ['hour', 'our'], ['dear', 'deer'], ['bear', 'bare'], ['tail', 'tale'], ['wood', 'would'], ['know', 'no'], ['new', 'knew'], ['by', 'buy', 'bye'], ['why', 'y'], ['you', 'u'], ['are', 'r'],
+  ['okay', 'ok'], ['pe', 'p e', 'pee'], ['tv', 't v'], ['cd', 'c d'], ['ufo', 'u f o'], ['mom', 'mum'], ['gray', 'grey'], ['color', 'colour'], ['doughnut', 'donut'], ['ice cream', 'icecream']];
+function lev(a, b) { const m = b.length; let prev = Array.from({ length: m + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) { const cur = [i]; for (let j = 1; j <= m; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; }
+  return prev[m]; }
+const simi = (a, b) => (!a && !b) ? 1 : 1 - lev(a, b) / Math.max(a.length, b.length);
+// かんたんな 音の キー（つづりの ちがいより 音の ちかさを 見る）
+const pkey = w => w.replace(/[^a-z]/g, '').replace(/ph/g, 'f').replace(/ck/g, 'k').replace(/c(?=[eiy])/g, 's').replace(/c/g, 'k').replace(/q/g, 'k').replace(/x/g, 'ks')
+  .replace(/wh/g, 'w').replace(/^kn/, 'n').replace(/^wr/, 'r').replace(/gh/g, '').replace(/dge/g, 'j').replace(/(.)\1+/g, '$1').replace(/(?!^)[aeiouy]+/g, 'a');
+function sayScore(alts, target, extra = []) {
+  const tg = [target, ...extra].map(norm).filter(Boolean);
+  let best = { lv: 0, sim: 0, text: norm(alts[0] || '') };
+  for (const alt of alts) {
+    const n = norm(alt), words = n.split(' ');
+    for (const t of tg) {
+      if (n === t || (' ' + n + ' ').includes(' ' + t + ' ')) return { lv: 2, sim: 1, text: t };
+      const h = HOMO.find(g => g.includes(t)); if (h && h.some(x => (' ' + n + ' ').includes(' ' + x + ' '))) return { lv: 2, sim: 1, text: t };
+      const L = t.split(' ').length;
+      for (let len = Math.max(1, L - 1); len <= L + 1; len++) for (let i = 0; i + len <= words.length; i++) {
+        const seg = words.slice(i, i + len).join(' ');
+        const sm = Math.max(simi(seg.replace(/ /g, ''), t.replace(/ /g, '')), .95 * simi(pkey(seg), pkey(t)));
+        if (sm > best.sim) best = { sim: sm, text: seg };
+      }
+    }
+  }
+  best.lv = best.sim >= .85 ? 2 : best.sim >= .6 ? 1 : 0;
+  return best;
+}
+// おてほん と きこえた ことばを 1もじずつ くらべる（ちがう ところに 下せん）
+function lcsDiff(a, b) {
+  const n = a.length, m = b.length, D = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) D[i][j] = a[i] === b[j] ? D[i + 1][j + 1] + 1 : Math.max(D[i + 1][j], D[i][j + 1]);
+  let i = 0, j = 0, t = '', h = ''; const X = c => `<b class="dx">${esc(c === ' ' ? '␣' : c)}</b>`;
+  while (i < n && j < m) { if (a[i] === b[j]) { t += esc(a[i]); h += esc(b[j]); i++; j++; } else if (D[i + 1][j] >= D[i][j + 1]) { t += X(a[i]); i++; } else { h += X(b[j]); j++; } }
+  while (i < n) t += X(a[i++]); while (j < m) h += X(b[j++]);
+  return { t, h };
+}
+// 日本人が まちがえやすい 音の コツ
+function pronTips(target, heard) {
+  const t = norm(target), h = norm(heard), tips = [];
+  if (/r/.test(t) && /l/.test(h) && !/l/.test(t)) tips.push('<b>R</b>：したを どこにも つけずに、くちを すこし まるめて「ゥル」');
+  else if (/l/.test(t) && /r/.test(h) && !/r/.test(t)) tips.push('<b>L</b>：したの さきを 上の はの うらに ピタッと つけて「ル」');
+  if (/th/.test(t) && !/th/.test(h)) tips.push('<b>TH</b>：したの さきを 上と下の はで かるく はさんで、いきを だす');
+  if (/v/.test(t) && !/v/.test(h)) tips.push('<b>V</b>：上の はを 下くちびるに あてて「ヴ」と ふるわせる');
+  if (/f/.test(t) && !/f/.test(h)) tips.push('<b>F</b>：上の はを 下くちびるに あてて「フッ」と いきだけ');
+  if (/sh/.test(t) && !/sh/.test(h)) tips.push('<b>SH</b>：くちびるを まえに つきだして「シュ」');
+  else if (/(^| )s[ei]/.test(t) && /sh/.test(h)) tips.push('<b>S</b>：はを かるく とじて「スィ」。「シ」に ならないように');
+  if (/[bdgkptmns]$/.test(t) && /[aeiou]$/.test(h)) tips.push('さいごに「ウ」や「オ」を つけない。さいごの 音は みじかく とめる');
+  if (/(er|ir|ur)/.test(t) && !/(er|ir|ur)/.test(h)) tips.push('<b>er / ir / ur</b>：したを おくに まるめて「アー」');
+  if (tips.length < 2) tips.push('🐢 ゆっくり を きいて、おなじ リズム・おなじ つよさで まねしよう');
+  return tips.slice(0, 2);
+}
+function hear(onState = () => { }) {
   return new Promise(res => {
-    if (!SR) return res(null);
-    let r; try { r = new SR(); } catch (e) { return res(null); }
-    r.lang = 'en-US'; r.maxAlternatives = 5; r.interimResults = false;
-    let got = null, err = false;
-    r.onresult = e => { got = [...e.results[0]].map(a => a.transcript.toLowerCase().trim()); };
-    r.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') err = true; };
-    r.onend = () => res(err ? null : (got || []));
-    try { r.start(); } catch (e) { return res(null); }
-    setTimeout(() => { try { r.stop(); } catch (e) { } }, 5000);
+    if (!SR) return res({ alts: [], err: 'unsupported' });
+    let r; try { r = new SR(); } catch (e) { return res({ alts: [], err: 'unsupported' }); }
+    r.lang = 'en-US'; r.maxAlternatives = 10; r.interimResults = true; r.continuous = false;
+    let finals = [], interim = '', err = null, done = false, t1 = 0;
+    r.onaudiostart = () => onState('ready');
+    r.onspeechstart = () => onState('speech');
+    r.onresult = e => { for (let i = e.resultIndex; i < e.results.length; i++) { const R = e.results[i];
+      if (R.isFinal) finals.push(...[...R].map(a => a.transcript)); else { interim = R[0].transcript; onState('interim', interim); } } };
+    r.onerror = e => { if (e.error !== 'aborted') err = e.error; };
+    r.onend = () => { if (done) return; done = true; clearTimeout(t1); const alts = finals.length ? finals : (interim ? [interim] : []); res({ alts, err: alts.length ? null : (err || 'no-speech') }); };
+    try { r.start(); onState('start'); } catch (e) { return res({ alts: [], err: 'busy' }); }
+    t1 = setTimeout(() => { try { r.stop(); } catch (e) { } }, 9000);
   });
 }
-const norm = s => String(s).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-function heardOK(alts, targets) {
-  return alts.some(a => { const n = norm(a); return targets.some(t => { t = norm(t); return n === t || (' ' + n + ' ').includes(' ' + t + ' '); }); });
+// けっかを 出す ばしょ（ボタンの ちかくに つくる）
+function micBox(btn) {
+  const row = btn.closest('.ex-row');
+  if (row) { let b = row.nextElementSibling; if (!b || !b.classList.contains('micbox')) { b = document.createElement('div'); b.className = 'micbox'; row.after(b); } return b; }
+  const host = btn.closest('.wcard') || btn.parentElement;
+  let b = host.querySelector('.micbox'); if (!b) { b = document.createElement('div'); b.className = 'micbox'; host.appendChild(b); } return b;
 }
+const MIC_ERR = {
+  'no-speech': 'こえが とどかなかったよ。「🎤 どうぞ！」が でてから いってね',
+  'audio-capture': 'マイクが みつからないよ。おうちの人に きいてね',
+  'not-allowed': 'マイクが つかえない せっていに なってるよ（おうちの人へ：Chromeの サイトの せっていで マイクを「許可」に）',
+  'service-not-allowed': 'マイクが つかえない せっていに なってるよ（おうちの人へ：Chromeの サイトの せっていで マイクを「許可」に）',
+  'network': 'インターネットに つながってないと ききとれないよ',
+  'unsupported': 'この ブラウザでは つかえないよ。Chromeで ひらいてね', 'busy': 'ちょっと まって もういちど おしてね',
+};
+let micBusy = false; const micMiss = {};
 async function tryMic(btn, target, extra = []) {
-  if (!SR) return;
-  stopVoice();
-  const old = btn.innerHTML; btn.disabled = true; btn.innerHTML = '🎙️ きいてるよ…';
-  setMimi('normal', 'どうぞ！ いってみて 👂');
-  const r = await hear();
-  btn.disabled = false; btn.innerHTML = old;
-  if (r === null) { setMimi('oops', 'マイクがつかえないみたい。おうちの人にきいてね'); return; }
-  if (!r.length) { setMimi('oops', 'きこえなかったよ。もういちど、大きなこえで！'); return; }
-  if (heardOK(r, [target, ...extra])) {
-    sfx('ok'); setMimi('happy', 'じょうず！ ちゃんと つたわったよ ✨');
-    const t = todayKey(); if (S.spokeDay !== t) { S.spokeDay = t; S.spoke = []; }
-    if (!S.spoke.includes(target)) { S.spoke.push(target); addStar(1); }
-    save();
-  } else {
-    setMimi('normal', `「${esc(r[0])}」ってきこえたよ。おてほんをきいて もういちど！`);
+  if (!SR || micBusy) return;
+  micBusy = true; stopVoice();
+  const box = micBox(btn), old = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '⏳ じゅんび…';
+  box.innerHTML = '<span class="small">ちょっと まってね…（まだ いわないでね）</span>';
+  const r = await hear((st, txt) => {
+    if (st === 'ready') { btn.innerHTML = '🎙️ どうぞ！'; btn.classList.add('live'); box.innerHTML = '<b class="go">🎤 どうぞ！ いってみて</b><div class="small">おおごえ じゃなくて ふつうの こえで OK</div>'; setMimi('think', 'どうぞ！ 👂'); }
+    else if (st === 'interim') box.innerHTML = `<span class="small">きこえてる… </span><b class="en-font">${esc(txt)}</b>`;
+  });
+  micBusy = false; btn.disabled = false; btn.innerHTML = old; btn.classList.remove('live');
+  if (!box.isConnected) return;
+  const tgt = norm(target);
+  if (!r.alts.length) {
+    micMiss[tgt] = (micMiss[tgt] || 0) + 1;
+    let msg = MIC_ERR[r.err] || MIC_ERR['no-speech'];
+    if (micMiss[tgt] >= 2 && (r.err === 'no-speech' || !MIC_ERR[r.err])) msg += '<ul class="tips"><li>タブレットの マイク（ちいさい あな）に 20cmくらい ちかづいてね</li><li>まわりが うるさいと ききとりにくいよ</li><li>むずかしい ときは 🐢 を きいて まねする だけでも だいじょうぶ！</li></ul>';
+    box.innerHTML = msg; setMimi('oops', 'うまく きこえなかったみたい'); return;
   }
+  micMiss[tgt] = 0;
+  const sc = sayScore(r.alts, target, extra);
+  const giveStar = () => { const t = todayKey(); if (S.spokeDay !== t) { S.spokeDay = t; S.spoke = []; } if (!S.spoke.includes(tgt)) { S.spoke.push(tgt); addStar(1); } save(); };
+  if (sc.lv === 2) { sfx('ok'); giveStar(); box.innerHTML = '<b class="okk">◎ ばっちり！ ちゃんと つたわったよ ✨</b>'; setMimi('happy', 'じょうず！ ✨'); return; }
+  const d = lcsDiff(tgt, sc.text), tips = sc.sim < .35 ? ['ちがう ことばに きこえたみたい。🔊 で おてほんを きいてから いってみよう', '🐢 ゆっくり を きいて、おなじ リズムで まねしよう'] : pronTips(target, sc.text);
+  const cmp = `<div class="cmpbox"><div><span class="lab">おてほん</span><b class="en-font">${d.t}</b><button class="play mini" data-say="${esc(target)}">🔊</button><button class="play mini slowb" data-slow="${esc(target)}">🐢</button></div>
+    <div><span class="lab">きこえた</span><span class="en-font">${d.h || '…'}</span></div></div><ul class="tips">${tips.map(x => `<li>${x}</li>`).join('')}</ul>`;
+  if (sc.lv === 1) { sfx('ok'); giveStar(); box.innerHTML = `<b class="okk">○ おしい！ ほとんど つたわったよ</b>${cmp}`; setMimi('happy', 'おしい！ あと ちょっと！'); }
+  else { box.innerHTML = `<b>△ 「<span class="en-font">${esc(sc.text)}</span>」って きこえたよ</b>${cmp}<div class="small">下せんの ところが ちがって きこえたよ。🔊 を きいて もういちど！</div>`; setMimi('think', 'もういちど いってみよう！'); }
+  $$('[data-say]', box).forEach(x => x.onclick = () => say(x.dataset.say));
+  $$('[data-slow]', box).forEach(x => x.onclick = () => say(x.dataset.slow, 0.55));
 }
 
 /* ---------- 効果音 ---------- */
@@ -1075,18 +1165,11 @@ function zukanCat(id) {
 function wordModal(w) {
   const m = modal(`<div class="wcard"><div class="pic">${pic(w)}</div>${w.art ? `<div class="art en-font">${w.art}</div>` : ''}<div class="en en-font">${esc(w.en)}</div><div class="ja">${esc(w.ja)}</div>
     <div class="row"><button class="btn sm purple" id="mp1">🔊</button><button class="btn sm sub" id="mp2">🐢</button>${SR ? '<button class="btn sm mint" id="mmic">🎤 いってみる</button>' : ''}</div>
-    <div class="small" id="mmsg" style="margin-top:8px"></div></div><button class="btn big sub" id="mcl">とじる</button>`);
+    </div><button class="btn big sub" id="mcl">とじる</button>`);
   $('#mp1', m).onclick = () => say(w.en);
   $('#mp2', m).onclick = () => say(w.art ? w.art + ' ' + w.en : w.en, 0.55);
   $('#mcl', m).onclick = closeModal;
-  if (SR) $('#mmic', m).onclick = async e => {
-    const btn = e.currentTarget; stopVoice(); btn.disabled = true; $('#mmsg').textContent = '🎙️ きいてるよ…';
-    const r = await hear(); btn.disabled = false; const box = $('#mmsg'); if (!box) return;
-    if (r === null) box.textContent = 'マイクが つかえないみたい';
-    else if (!r.length) box.textContent = 'きこえなかったよ。もういちど！';
-    else if (heardOK(r, [w.en, ...(isNum(w) ? [w.em] : [])])) { sfx('ok'); box.textContent = 'じょうず！ ✨'; }
-    else box.textContent = `「${r[0]}」って きこえたよ。もういちど！`;
-  };
+  if (SR) $('#mmic', m).onclick = e => tryMic(e.currentTarget, w.en, isNum(w) ? [w.em] : []);
   say(w.en);
 }
 
